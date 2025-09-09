@@ -1,253 +1,107 @@
-[![Documentation Status](https://github.com/qilingframework/qiling/wiki)](https://github.com/qilingframework/qiling/wiki)
-[![Downloads](https://pepy.tech/badge/qiling)](https://pepy.tech/project/qiling)
-[![Chat on Telegram](https://img.shields.io/badge/Chat%20on-Telegram-brightgreen.svg)](https://t.me/qilingframework)
+# Baremetal enhanced debugger 
+This project is an enhanced debugger based on Qiling, designed for baremetal binaries dealing with MMIO as : firmwares, bootROMs or bootloaders.  
 
----
+## Motivations, goals, and inspiration
+The goal is to allow **emulation/reverse-engineering/debugging** of baremetal binaries that are accessing **unimplemented hardware peripherals using MMIO.**  
+The purpose is to provide a simple approach to make faithful emulation of binaries dealing with multiple hardware peripherals without having to reimplement their logics.  
+These upgrades were developed with the will to perform fuzzing on well chosen parts of bootROMs and bootloaders. We created this to have an easy way to emulate binaries until reaching these targeted parts in the code.  
+To us, this prior fuzzing emulation step, is mandatory to perform a faithful software setup before starting to look for vulnerabilities. 
 
-<p align="center">
-<img width="150" height="150" src="https://raw.githubusercontent.com/qilingframework/qiling/master/docs/qiling2_logo_small.png">
-</p>
+## Design and features
+The added features are entirely based on the Qiling's hooks capacities and modifications of the gdbserver. 
 
-# Qiling Framework
+- **MMIOTracker** : tracks accesses to user-defined memory regions corresponding to MMIO registers. It stops the emulation right before such access happens. This allows the user to have an interactive view of the corresponding access. 
+    - **Displayed information** : access type, access size, current value in memory and in case of a write, value to be written are displayed. 
+    - **User interactions** : in the read access case, the user has the possibility to provide a value before the code fetches it. The value will be placed at the corresponding address in memory.
+    - **Values storing logic** : user-provided values are stored in memory during the run and dumped to ```enhanced_debug.json```. Using this, runs are faithfully reproducibles. Values are stored using the MMIO address and the access size as a key. Inside the same key, a pile is created to keep execution order safe. When a read with no user-provided values happens, the current value in memory is stored in the pile. 
+    - **Naming MMIO registers** : it is also possible to provide names to MMIO registers accessed during a run. Names will be stored and shown again if the same register is accessed. 
 
-Qiling is an advanced binary emulation framework that allows you to emulate and sandbox code in an isolated environment across multiple platforms and architectures. Built on top of Unicorn Engine, Qiling provides a higher-level framework that understands operating system contexts, executable formats, and dynamic linking.
+- **SubroutineTracker** : greatly inspired from the Qiling's branch predictor, it helps to detect when the code is entering or leaving a subroutine. It stops execution when a branch leading to a subroutine is detected. 
+    - **Displayed information** : address where the branch leads to and four precedent addresses. 
+    - **Naming subroutines** : the user has the possibility to name a subroutine to make easier the reverse engineering process. 
+    - **Values storing logic** : names are stored in a pile and are linked to the address they correspond to. 
 
-## Table of Contents
+- **MemoryMapper** : map the memory on the fly when an access to unmapped memory region is detected. The user may add restrictions to address ranges that must not be mapped automatically. 
 
-- [Features](#features)
-- [Appearance](#Appearance)
-- [Use Cases](#use-cases)
-- [Quick Start](#quick-start)
-  - [Installation](#installation)
-  - [Basic Usage](#basic-usage)
-- [Qiling vs. Other Emulators](#qiling-vs-other-emulators)
-  - [Qiling vs. Unicorn Engine](#qiling-vs-unicorn-engine)
-  - [Qiling vs. QEMU User Mode](#qiling-vs-qemu-user-mode)
-- [Examples](#examples)
-- [Qltool](#qltool)
-- [Contributing](#contributing)
-- [License](#license)
-- [Contact](#contact)
-- [Core Developers & Contributors](#core-developers--contributors)
 
-## Features
+## How to use it ? 
 
-- **Multi-platform Emulation**: Windows, macOS, Linux, Android, BSD, UEFI, DOS, MBR.
-- **Multi-architecture Emulation**: 8086, X86, X86_64, ARM, ARM64, MIPS, RISC-V, PowerPC.
-- **Multiple File Format Support**: PE, Mach-O, ELF, COM, MBR.
-- **Kernel Module Emulation**: Supports Windows Driver (.sys), Linux Kernel Module (.ko) & macOS Kernel (.kext) via [Demigod](https://groundx.io/demigod/).
-- **Isolated Sandboxing**: Emulates & sandboxes code in an isolated environment with a fully configurable sandbox.
-- **In-depth API**: Provides in-depth memory, register, OS level, and filesystem level API.
-- **Fine-grain Instrumentation**: Allows hooks at various levels (instruction/basic-block/memory-access/exception/syscall/IO/etc.).
-- **Virtual Machine Level API**: Supports saving and restoring the current execution state.
-- **Debugging Capabilities**: Supports cross-architecture and platform debugging, including a built-in debugger with reverse debugging capability.
-- **Dynamic Hot Patching**: Allows dynamic hot patching of on-the-fly running code, including loaded libraries.
-- **Python Framework**: A true framework in Python, making it easy to build customized security analysis tools.
+- **Configuration file** :  
+There is only one configuration file : ```enhanced_debug.json``` that is used as input and output.  
+It gathers the 5 following elements in one json structure: 
 
-## Appearance
-
-Qiling also made its way to various international conferences.
-
-2022:
-- [Black Hat, EU](https://www.blackhat.com/eu-22/arsenal/schedule/#reversing-mcu-with-firmware-emulation-29553)
-- [Black Hat, MEA](https://blackhatmea.com/node/724)
-
-2021:
-- [Black Hat, USA](https://www.blackhat.com/us-21/arsenal/schedule/index.html#bringing-the-x-complete-re-experience-to-smart-contract-24119)
-- [Hack In The Box, Amsterdam](https://conference.hitb.org/hitbsecconf2021ams/sessions/when-qiling-framework-meets-symbolic-execution/)
-- [Black Hat, Asia](https://www.blackhat.com/asia-21/arsenal/schedule/index.html#qiling-smart-analysis-for-smart-contract-22643)
-
-2020:
-- [Black Hat, Europe](https://www.blackhat.com/eu-20/arsenal/schedule/index.html#qiling-framework-deep-dive-into-obfuscated-binary-analysis-21781)
-- [Black Hat, USA](https://www.blackhat.com/us-20/arsenal/schedule/index.html#qiling-framework-from-dark-to-dawn-----enlightening-the-analysis-of-the-most-mysterious-iot-firmware--21062)
-- [Black Hat, USA (Demigod)](https://www.blackhat.com/us-20/briefings/schedule/#demigod-the-art-of-emulating-kernel-rootkits-20009)
-- [Black Hat, Asia](https://www.blackhat.com/asia-20/arsenal/schedule/index.html#qiling-lightweight-advanced-binary-analyzer-19245)
-- [Hack In The Box, Lockdown 001](https://conference.hitb.org/lockdown-livestream/)
-- [Hack In The Box, Lockdown 002](https://conference.hitb.org/hitb-lockdown002/virtual-labs/virtual-lab-qiling-framework-learn-how-to-build-a-fuzzer-based-on-a-1day-bug/)
-- [Hack In The Box, Cyberweek](https://cyberweek.ae/2020/lab-qiling-framework/)
-- [Nullcon](https://nullcon.net/website/goa-2020/speakers/kaijern-lau.php)
-    
-2019:
-- [DEFCON, USA](https://www.defcon.org/html/defcon-27/dc-27-demolabs.html#QiLing)
-- [Hitcon](https://hitcon.org/2019/CMT/agenda)
-- [Zeronights](https://zeronights.ru/report-en/qiling-io-advanced-binary-emulation-framework/)
-
-## Use Cases
-
-Qiling has been presented at various international conferences, showcasing its versatility in:
-
-- Binary analysis and reverse engineering.
-- Malware analysis and sandboxing.
-- Firmware analysis and emulation.
-- Security research and vulnerability discovery.
-- CTF challenges and exploit development.
-
-For more details on Qiling's use cases, blog posts, and related work, please refer to [Qiling's use case, blog and related work](https://github.com/qilingframework/qiling/issues/134).
-
-## Quick Start
-
-### Installation
-
-Qiling requires Python 3.8 or newer. You can install it using pip:
-
-```bash
-pip install qiling
+```hook_list``` represents the address ranges that the MMIOTracker will track during the execution. Needs to be defined prior execution by the user. 
+```json
+"hook_list" : [["0x70000000", "0x70003fff"], ["0x7000e400", "0x7000ffff"], ["0x60005000", "0x600053ff"]]
 ```
 
-For more detailed installation instructions and dependencies, please refer to the [official documentation](https://github.com/qilingframework/qiling/wiki/Installation).
+```memory_mapping``` represents the address ranges that the MMIOMapper must not map during the execution. This is useful when trying to find vulnerabilities.  
+```json
+"memory_mapping" : [["0x00000000", "0x00001000"]]
+```
 
-### Basic Usage
+```mmio_map``` is generated during the execution and gathers all the names associated to MMIO registers that the user has provided. Names are used in the same run and are dumped in this format in the file for a future run. 
+```json
+"mmio_map": {"0x70000008": {"size": 4, "name": "UART_DR"}, "0x70000004": {"size": 4, "name": "UART_SR"}}
+```
 
-The example below shows how to use Qiling framework in the most straightforward way to emulate a Windows executable.
+```subroutine_map``` is same feature described above but for subroutines. 
+
+```json
+"subroutine_map": {"0x8000150": "jump_to_main", "0x8000156": "jump_to_reset"}
+```
+
+```subroutine_pile``` is generated during the execution and allows to restart emulation from a snapshot. 
+```json
+"subroutine_pile": ["0x100e6c"]
+```
+
+- **Recommended usage** :  
+one terminal using a reverse-engineering tool or a debugger connected using the gdb remote serial protocol to the gdbserver. A second terminal in which the user started the Qiling's python script in the python environment. This is an example using IDA. 
+
+![Usage example 1](./docs/enhanced_debug_1.png)
+
+- **Available commands** :  
+When the execution is stopped due to a tracked event, the user can use commands in the CLI terminal related to MMIO tracking. 
+    - ```provide 0xaaaaaaaa``` : used when the tracked access is a read, it will place the value in the memory at the corresponding address before the instruction actually fetches it. 
+    - ```name mmio GPIOA``` : can be used both with a read or write access. Indicates a name for the corresponding MMIO register. 
+    - ```name subroutine main``` : can be used only when the execution stopped for a subroutine detection. Indicates a name for the corresponding subroutine. 
+    - ```name subroutine main 0x08001000``` : can be used with no restriction. Indicates a name for the address that must corresponds to a subroutine branching address.
+    - ```disable subroutine stop``` : disable the subroutine stopping feature but values and subroutines are still tracked in the background. To enable again the stopping feature same command with enable. 
+    - ```disable mmio stop``` : disable the MMIO stopping feature but values are still tracked in the background. To enable again the stopping feature same command with enable.
+    - ```save progression``` : will dump all the emulation provided elements in the configuration file but will not stop the execution. 
+    - ```save``` : will dump all the emulation provided elements in the configuration file and save the whole emulation state using the qiling ```save``` feature and dump the content into a file named ```execution.bin```. 
+    - ```restore```: command to be used in combination with the ```restore``` qiling feature in the user's python script and the ```execution.bin``` file. For the MMIOTracker and SubroutineTracker, this will consume all the values in the file and start to record the emulation as if the run restarted from where it stopped. **The user must be careful, the execution.bin state's and the enhanced_debug state's must be equivalent otherwise a desynchronization will happen.**
+
+- **Enabling the tool in a Qiling script**:
+
+The gdbserver must be enabled in the Qiling script and the ```enhanced_debugger``` option should be added to the line : 
 
 ```python
-from qiling import Qiling
-
-if __name__ == "__main__":
-    # initialize Qiling instance, specifying the executable to emulate and the emulated system root.
-    # note that the current working directory is assumed to be Qiling home
-    ql = Qiling([r'examples/rootfs/x86_windows/bin/x86_hello.exe'], r'examples/rootfs/x86_windows')
-
-    # start emulation
-    ql.run()
+ql.debugger= "gdb:127.0.0.1:9999:enhanced_debugger"
 ```
 
-## Qiling vs. Other Emulators
-
-There are many open-source emulators, but two projects closest to Qiling are [Unicorn](http://www.unicorn-engine.org) & [QEMU user mode](https://qemu.org). This section explains the main differences of Qiling against them.
-
-### Qiling vs. Unicorn Engine
-
-Built on top of Unicorn, but Qiling & Unicorn are two different animals.
-
-- **Unicorn** is just a CPU emulator, so it focuses on emulating CPU instructions, that can understand emulator memory. Beyond that, Unicorn is not aware of higher level concepts, such as dynamic libraries, system calls, I/O handling or executable formats like PE, Mach-O or ELF. As a result, Unicorn can only emulate raw machine instructions, without Operating System (OS) context.
-- **Qiling** is designed as a higher level framework, that leverages Unicorn to emulate CPU instructions, but can understand OS: it has executable format loaders (for PE, Mach-O & ELF currently), dynamic linkers (so we can load & relocate shared libraries), syscall & IO handlers. For this reason, Qiling can run executable binary without requiring its native OS.
-
-### Qiling vs. QEMU User Mode
-
-QEMU user mode does a similar thing to our emulator, that is, to emulate whole executable binaries in a cross-architecture way.
-However, Qiling offers some important differences against QEMU user mode:
-
-- **Qiling is a true analysis framework**, that allows you to build your own dynamic analysis tools on top (in Python). Meanwhile, QEMU is just a tool, not a framework.
-- **Qiling can perform dynamic instrumentation**, and can even hot patch code at runtime. QEMU does neither.
-- Not only working cross-architecture, **Qiling is also cross-platform**. For example, you can run Linux ELF file on top of Windows. In contrast, QEMU user mode only runs binary of the same OS, such as Linux ELF on Linux, due to the way it forwards syscall from emulated code to native OS.
-- **Qiling supports more platforms**, including Windows, macOS, Linux & BSD. QEMU user mode can only handle Linux & BSD.
+## Installation
+All available installation methods are described here : [Qiling installation guide](https://docs.qiling.io/en/latest/install/).   
+However, it is recommended to use a python virtual environment and follow this method :   
+```bash 
+mkdir qiling_environment
+cd qiling_environment
+python3 -m venv qilingenv
+source qilingenv/bin/activate
+git clone -b enhanced-debug https://github.com/antcpl/qiling-baremetal-enhanced-debugger.git
+cd qiling-baremetal_enhanced-debugger && git submodule update --init --recursive
+pip3 install .
+``` 
+After this procedure, two different directories will be available : in the ```qiling_environment``` : 
+1. ```qilingenv``` : this is the qiling's core and the python scripts used in the python environment. The modifications and the debugging of the core must be done on the python files of this directory. 
+2. ```qiling``` : this directory holds all the Qiling's example scripts and the rootfs that could be used in Qiling. All emulation scripts and developments should be done in this directory. 
 
 ## Examples
 
-- The following example shows how a Windows crackme may be patched dynamically to make it always display the “Congratulation” dialog.
+For the moment only one example is available, more will come later notably designed for ARM Cortex A7 and ARM7TDMI cores. A detailed README is available directly in the [enhanced_debug](./examples/mcu/enhanced_debug) directory. 
 
-```python
-from qiling import Qiling
-
-def force_call_dialog_func(ql: Qiling):
-    # get DialogFunc address from current stack frame
-    lpDialogFunc = ql.stack_read(-8)
-
-    # setup stack memory for DialogFunc
-    ql.stack_push(0)
-    ql.stack_push(1001)     # IDS_APPNAME
-    ql.stack_push(0x111)    # WM_COMMAND
-    ql.stack_push(0)
-
-    # push return address
-    ql.stack_push(0x0401018)
-
-    # resume emulation from DialogFunc address
-    ql.arch.regs.eip = lpDialogFunc
+- [Cortex_M3_reverse_example](./examples/mcu/enhanced_debug/cortex_M3_reverse_example/)
+- [Cortex_M3_bruteforce_example](./examples/mcu/enhanced_debug/cortex_M3_bruteforce_example/)
 
 
-if __name__ == "__main__":
-    # initialize Qiling instance
-    ql = Qiling([r'rootfs/x86_windows/bin/Easy_CrackMe.exe'], r'rootfs/x86_windows')
-
-    # NOP out some code
-    ql.patch(0x004010B5, b'\x90\x90')
-    ql.patch(0x004010CD, b'\x90\x90')
-    ql.patch(0x0040110B, b'\x90\x90')
-    ql.patch(0x00401112, b'\x90\x90')
-
-    # hook at an address with a callback
-    ql.hook_address(force_call_dialog_func, 0x00401016)
-    ql.run()
-```
-
-The below YouTube video shows how the above example works.
-
-#### Emulating ARM router firmware on Ubuntu x64 host
-
-Qiling Framework hot-patches and emulates an ARM router's `/usr/bin/httpd` on an x86_64 Ubuntu host.
-
-[![Qiling Tutorial: Emulating and Fuzz ARM router firmware](https://github.com/qilingframework/theme.qiling.io/blob/master/source/img/fuzzer.jpg?raw=true)](https://www.youtube.com/watch?v=e3_T3KLhNUs)
-
-#### Qiling's IDA Pro Plugin: Instrument and Decrypt Mirai's Secret
-
-This video demonstrates how Qiling's IDA Pro plugin can make IDA Pro run with Qiling instrumentation engine.
-
-[![Qiling's IDA Pro Plugin: Instrument and Decrypt Mirai's Secret](http://img.youtube.com/vi/ZWMWTq2WTXk/0.jpg)](http://www.youtube.com/watch?v=ZWMWTq2WTXk)
-
-#### GDB server with IDA Pro demo
-
-Solving a simple CTF challenge with Qiling Framework and IDA Pro
-
-[![Solving a simple CTF challenge with Qiling Framework and IDA Pro](https://i.ytimg.com/vi/SPjVAt2FkKA/0.jpg)](https://www.youtube.com/watch?v=SPjVAt2FkKA)
-
-#### Emulating MBR
-
-Qiling Framework emulates MBR
-
-[![Qiling DEMO: Emulating MBR](https://github.com/qilingframework/theme.qiling.io/blob/master/source/img/mbr.png?raw=true)](https://github.com/qilingframework/theme.qiling.io/blob/master/source/img/mbr.png?raw=true)
-
-## Qltool
-
-Qiling also provides a friendly tool named `qltool` to quickly emulate shellcode & executable binaries.
-
-With qltool, easy execution can be performed:
-
-With shellcode:
-
-```bash
-$ ./qltool code --os linux --arch arm --format hex -f examples/shellcodes/linarm32_tcp_reverse_shell.hex
-```
-
-With binary file:
-
-```bash
-$ ./qltool run -f examples/rootfs/x8664_linux/bin/x8664_hello --rootfs  examples/rootfs/x8664_linux/
-```
-
-With binary and GDB debugger enabled:
-
-```bash
-$ ./qltool run -f examples/rootfs/x8664_linux/bin/x8664_hello --gdb 127.0.0.1:9999 --rootfs examples/rootfs/x8664_linux
-```
-
-With code coverage collection (UEFI only for now):
-
-```bash
-$ ./qltool run -f examples/rootfs/x8664_efi/bin/TcgPlatformSetupPolicy --rootfs examples/rootfs/x8664_efi --coverage-format drcov --coverage-file TcgPlatformSetupPolicy.cov
-```
-
-With JSON output (Windows, mainly):
-
-```bash
-$ ./qltool run -f examples/rootfs/x86_windows/bin/x86_hello.exe --rootfs  examples/rootfs/x86_windows/ --console False --json
-```
-
-## Contributing
-
-We welcome contributions from the community! If you're interested in contributing to Qiling Framework, please check out our [GitHub repository](https://github.com/qilingframework/qiling) and look for open issues or submit a pull request.
-
-## License
-
-This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
-
-## Contact
-
-Get the latest info from our website [https://www.qiling.io](https://www.qiling.io)
-
-Contact us at email [info@qiling.io](mailto:info@qiling.io), or via Twitter [@qiling_io](https://twitter.com/qiling_io).
-
-## Core Developers & Contributors
-
-Please refer to [CREDITS.md](https://github.com/qilingframework/qiling/blob/dev/CREDITS.md).

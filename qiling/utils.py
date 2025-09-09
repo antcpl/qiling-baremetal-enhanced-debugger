@@ -338,7 +338,7 @@ def select_debugger(options: Union[str, bool]) -> Optional[QlClassInit['QlDebugg
         dbgtype = debugger_convert(objname)
 
         if dbgtype == QL_DEBUGGER.GDB:
-            kwargs = dict(zip(('ip', 'port'), args))
+            kwargs = dict(zip(('ip', 'port', 'enhanced_debugger'), args))
 
         elif dbgtype == QL_DEBUGGER.QDB:
             kwargs = {}

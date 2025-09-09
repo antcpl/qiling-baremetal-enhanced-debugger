@@ -20,6 +20,11 @@ import tempfile
 from functools import partial
 from logging import Logger
 from typing import IO, Iterator, MutableMapping, Optional, Union
+import selectors
+import queue
+import sys
+
+
 
 from unicorn import UcError
 from unicorn.unicorn_const import (
@@ -69,7 +74,7 @@ class QlGdb(QlDebugger):
     """A simple gdbserver implementation.
     """
 
-    def __init__(self, ql: Qiling, ip: str = '127.0.0.1', port: int = 9999):
+    def __init__(self, ql: Qiling, ip: str = '127.0.0.1', port: int = 9999, enhanced_debugger : str=None):
         super().__init__(ql)
 
         if type(port) is str:
@@ -77,8 +82,12 @@ class QlGdb(QlDebugger):
 
         self.ip = ip
         self.port = port
+        self.ack_mode = True
+        self.killed = False
 
+        # This function setup the execution beginning
         def __get_attach_addr() -> int:
+            #with MCU we are in this case 
             if ql.baremetal:
                 entry_point = ql.loader.entry_point
 
@@ -113,7 +122,7 @@ class QlGdb(QlDebugger):
         attach_addr = __get_attach_addr() if ql.entry_point is None else ql.entry_point
         detach_addr = __get_detach_addr() if ql.exit_point is None else ql.exit_point
 
-        self.gdb = QlGdbUtils(ql, attach_addr, detach_addr)
+        self.gdb = QlGdbUtils(ql, attach_addr, detach_addr, enhanced_debugger)
 
         self.features = QlGdbFeatures(self.ql.arch.type, self.ql.os.type)
         self.regsmap = self.features.regsmap
@@ -121,8 +130,34 @@ class QlGdb(QlDebugger):
         self.fake_procfs: MutableMapping[int, IO] = {}
 
     def run(self):
-        server = GdbSerialConn(self.ip, self.port, self.ql.log)
-        killed = False
+        self.killed = False
+
+        def __send(data: Reply, client, raw: bool = False) -> None:
+            """Send out a packet.
+
+            Args:
+                data : data to send out
+                raw : whether to encapsulate the data with standard header and
+                checksum or leave it raw
+            """
+            if type(data) is str:
+                data = data.encode(ENCODING)
+
+            assert type(data) is bytes
+
+            if raw:
+                packet = data
+            else:
+                data = __escape(data)
+                data = __rle_encode(data)
+
+                packet = b'$' + data + b'#' + f'{__checksum(data):02x}'.encode()
+
+            # follow gdbserver debug output format
+            self.ql.log.info(f'putpkt ("{__printable_prefix(data).decode(ENCODING)}");')
+
+            client.sendall(packet)
+
 
         def __hexstr(value: int, nibbles: int = 0) -> str:
             """Encode a value into a hex string.
@@ -168,6 +203,94 @@ class QlGdb(QlDebugger):
             raw = value.to_bytes(length, 'little')
 
             return int.from_bytes(raw, 'big')
+
+        def __printable_prefix(data: bytes) -> bytes:
+            """Follow the gnu gdbserver debug message format which emits only the
+            printable prefix of a packet (either incoming or outgoing). Note that
+            despite of its name, it includes non-printable characters as well.
+
+            Args:
+                data : packet data to scan
+
+            Returns: a prefix of the specified data buffer
+            """
+
+            def __isascii(ch: int) -> bool:
+                return 0 < ch < 0x80
+
+            if data.isascii():
+                return data
+
+            return data[:next((i for i, ch in enumerate(data) if not __isascii(ch)), len(data))]
+
+        def __escape(data: bytes) -> bytes:
+            """Escape data according to gdb protocol escaping rules.
+            """
+
+            def __repl(m: 're.Match[bytes]') -> bytes:
+                ch, *_ = m[0]
+
+                return bytes([ord('}'), ch ^ 0x20])
+
+            return re.sub(br'[*#$}]', __repl, data, flags=re.DOTALL)
+
+        def __unescape(data: bytes) -> bytes:
+            """Unescape data according to gdb protocol escaping rules.
+            """
+
+            def __repl(m: 're.Match[bytes]') -> bytes:
+                _, ch = m[0]
+
+                return bytes([ch ^ 0x20])
+
+            return re.sub(br'}.', __repl, data, flags=re.DOTALL)
+
+        def __rle_encode(data: bytes) -> bytes:
+            """Compact data using run-length encoding.
+            """
+
+            def __simple_rep(b: bytes, times: int) -> bytes:
+                return b * times
+
+            def __runlen_rep(b: bytes, times: int) -> bytes:
+                return b + b'*' + bytes([times - 1 + 29])
+
+            def __encode_rep(b: bytes, times: int) -> bytes:
+                assert times > 0, 'time should be a positive value'
+
+                if 0 < times < 4:
+                    return __simple_rep(b, times)
+
+                elif times == 6+1 or times == 7+1:
+                    return __runlen_rep(b, 6) + __encode_rep(b, times - 6)
+
+                else:
+                    return __runlen_rep(b, times)
+
+            def __repl(m: 're.Match[bytes]') -> bytes:
+                repetition = m[0]
+
+                ch = repetition[0:1]
+                times = len(repetition)
+
+                return __encode_rep(ch, times)
+
+            return re.sub(br'(.)\1{3,96}', __repl, data, flags=re.DOTALL)
+
+        def __rle_decode(data: bytes) -> bytes:
+            """Expand run-length encoded data.
+            """
+
+            def __repl(m: 're.Match[bytes]') -> bytes:
+                ch, _, times = m[0]
+
+                return bytes([ch] * (1 + times - 29))
+
+            return re.sub(br'.\*.', __repl, data, flags=re.DOTALL)
+
+        def __checksum(data: bytes) -> int:
+            return sum(data) & 0xff
+
 
         def handle_exclaim(subcmd: str) -> Reply:
             return REPLY_OK
@@ -245,9 +368,13 @@ class QlGdb(QlDebugger):
                 reply = f'S{SIGINT:02x}'
 
             else:
+                # if getattr(self.ql.arch, 'effective_pc', self.ql.arch.regs.arch_pc) == self.gdb.last_bp and self.gdb.mmio_handler:
+                #     # emulation stopped because it hit a breakpoint
+                #     reply = f'T{SIGTRAP:02x}swbreak:'
+                # print("{0:08x}".format(getattr(self.ql.arch, 'effective_pc', self.ql.arch.regs.arch_pc)))
+                # print("{0:08x}".format(self.gdb.last_bp))
                 if getattr(self.ql.arch, 'effective_pc', self.ql.arch.regs.arch_pc) == self.gdb.last_bp:
-                    # emulation stopped because it hit a breakpoint
-                    reply = f'S{SIGTRAP:02x}'
+                    reply = f'S{SIGTRAP:02x}' 
                 else:
                     # emulation has completed successfully
                     reply = f'W{self.ql.os.exit_code:02x}'
@@ -265,7 +392,6 @@ class QlGdb(QlDebugger):
             # indices are flexible and may be defined arbitrarily though xml.
             #
             # see: ./xml/arm/arm-fpa.xml
-
             return ''.join(__get_reg_value(*entry) for entry in self.regsmap)
 
         def handle_G(subcmd: str) -> Reply:
@@ -287,9 +413,8 @@ class QlGdb(QlDebugger):
             return REPLY_EMPTY
 
         def handle_k(subcmd: str) -> Reply:
-            global killed
-
-            killed = True
+            #print("[+] self.killed handler here !!!!!!!!!!!!!!!")
+            self.killed = True
             return REPLY_OK
 
         def handle_m(subcmd: str) -> Reply:
@@ -363,8 +488,9 @@ class QlGdb(QlDebugger):
             )
 
             if feature == 'StartNoAckMode':
-                server.ack_mode = False
-                server.log.debug('[noack mode enabled]')
+                # #print("non ack mode")
+                self.ack_mode = False
+                self.ql.log.debug('[noack mode enabled]')
 
             return REPLY_OK if feature in supported else REPLY_EMPTY
 
@@ -659,8 +785,8 @@ class QlGdb(QlDebugger):
 
                     for grp in groups:
                         cmd, *tid = grp.split(':', maxsplit=1)
-
                         if cmd in ('c', f'C{SIGTRAP:02x}'):
+
                             return handle_c('')
 
                         elif cmd in ('s', f'S{SIGTRAP:02x}'):
@@ -676,11 +802,13 @@ class QlGdb(QlDebugger):
             """Perform a single step.
             """
 
+            # #print("!!!!!!!!!!!!!!!! Performing a single step!!!!!!!!!!!!!!!!!")
+            
             self.gdb.resume_emu(steps=1)
 
-            # if emulation has been stopped, signal program termination
-            if self.ql.emu_state is QL_STATE.STOPPED:
-                return f'S{SIGTERM:02x}'
+            # # if emulation has been stopped, signal program termination
+            # if self.ql.emu_state is QL_STATE.STOPPED:
+            #     return f'S{SIGTERM:02x}'
 
             # otherwise, this is just single stepping
             return f'S{SIGTRAP:02x}'
@@ -760,84 +888,124 @@ class QlGdb(QlDebugger):
             'z': handle_z
         }
 
-        # main server loop
-        for packet in server.readpackets():
-            if server.ack_mode:
-                server.send(REPLY_ACK, raw=True)
-                server.log.debug('[sent ack]')
 
-            cmd, subcmd = packet[0], packet[1:]
-            handler = handlers.get(f'{cmd:c}')
 
-            if handler:
-                reply = handler(subcmd.decode(ENCODING))
-                server.send(reply)
+        def handle_provide(subcmd:str)->None: 
+            if subcmd is None or not self.gdb.mmio_tracker.current_track: 
+                self.ql.log.error('ERROR you cannot provide this value, either not handling mmio acces, either wrong command syntax')
+            else: 
+                self.gdb.mmio_tracker.do_provide(self.ql,subcmd[0])
 
-                if killed:
-                    break
+
+        def handle_name(subcmd:str)->None: 
+            if subcmd is None: 
+                self.ql.log.error('Wrong name command format')
+            elif subcmd[0]=="mmio" and len(subcmd)>1: 
+                self.gdb.mmio_tracker.add_name(subcmd[1])
+                self.gdb.mmio_tracker.context_mmio()
+
+            elif subcmd[0]=="subroutine" and len(subcmd)>1:
+                self.gdb.subroutine_tracker.add_name(subcmd[1])
+                self.gdb.subroutine_tracker.context_subroutines()
+        
+            elif subcmd[0]=="subroutine" and len(subcmd)>2:
+                self.gdb.subroutine_tracker.add_name(subcmd[1], subcmd[2])
+                self.gdb.subroutine_tracker.context_subroutines()
+
+
+        def handle_disable(subcmd:str)->None: 
+            if subcmd is None: 
+                self.ql.log.error('Wrong disable command format')
+            if subcmd[0]=="mmio": 
+                if len(subcmd)==1:
+                    self.gdb.hook_handler.hook_unsetter(self.ql)
+                elif len(subcmd)==2 and subcmd[1]=="stop":
+                    self.gdb.mmio_tracker.disable_mmio_stop=True
+            elif subcmd[0]=="subroutine":
+                if len(subcmd)==1:
+                    self.gdb.subroutine_tracker.subroutine_tracking = False
+                elif len(subcmd)==2 and subcmd[1]=="stop":
+                    self.gdb.subroutine_tracker.stop_feature = False
+
+
+        def handle_enable(subcmd:str)->None: 
+            if subcmd is None: 
+                self.ql.log.error("Wrong enable command format")
+            elif subcmd[0]=="mmio":
+                if len(subcmd)==1: 
+                    self.gdb.hook_handler.hook_setter(self.ql, self.gdb.mmio_tracker)
+                elif len(subcmd)==2 and subcmd[1]=="stop":
+                    self.gdb.mmio_tracker.disable_mmio_stop=False
+                    self.gdb.mmio_tracker.context_mmio()
+            
+            elif subcmd[0]=="subroutine":
+                if len(subcmd)==1:
+                    self.gdb.subroutine_tracker.subroutine_tracking = True
+                elif len(subcmd)==2 and subcmd[1]=="stop":
+                    self.gdb.subroutine_tracker.stop_feature = True
+                    self.gdb.subroutine_tracker.context_subroutines()
+
+        def handle_save(subcmd:str=None)->None: 
+            if subcmd is None: 
+                self.ql.save(reg=True, mem=True, snapshot="execution.bin")
+                self.ql.log.info("[+] Qiling emulation state saved !")
+            elif subcmd[0] == "progression":
+                self.gdb.mmio_tracker.dump()
+                self.gdb.subroutine_tracker.dump_naming()
+            else: 
+                self.ql.log.error("Wrong save command format")
+
+        def handle_restore(subcmd:str=None)->None: 
+            if subcmd is None: 
+                self.mmio_tracker.restore()
+                self.subroutine_tracker.restore()
             else:
-                self.ql.log.info(f'{PROMPT} command not supported')
-                server.send(REPLY_EMPTY)
-
-        server.close()
+                self.ql.log.error("Wrong restore command format")
 
 
-class GdbSerialConn:
-    """Serial connection handler.
-    """
+        mmio_tracker_handlers={
+            'provide': handle_provide,
+            'name': handle_name,
+            'disable': handle_disable,
+            'enable': handle_enable,
+            'save': handle_save, 
+            'restore': handle_restore
+        }
 
-    # default recieve buffer size
-    BUFSIZE = 4096
 
-    def __init__(self, ipaddr: str, port: int, logger: Logger) -> None:
-        """Create a new gdb serial connection handler.
+        #selector callbacks 
+        def parse_mmio_tracker_command(standardinput):
+            line = standardinput.readline().strip().split(' ')
+            cmd = line[0]
+            subcmd = line[1:] if len(line)>1 else None
 
-        Args:
-            ipaddr : ip address to bind the socket to
-            port   : port number to listen on
-            logger : logger instance to use
-        """
+            handler = mmio_tracker_handlers.get(cmd)
+            if handler:
+                handler(subcmd)
+            else:
+                self.ql.log.info(f'MMIO Tracker command not supported')
 
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((ipaddr, port))
-        sock.listen()
 
-        self.log = logger
-        self.log.info(f'{PROMPT} listening on {ipaddr}:{port:d}')
+        def readpackets(client) -> None:
+            """Iterate through incoming packets in an active connection until
+            it is terminated.
+            """
 
-        client, _ = sock.accept()
+            BUFSIZE = 4096
 
-        self.sock = sock
-        self.client = client
-
-        # ack mode should be turend on by default
-        self.ack_mode = True
-
-    def close(self):
-        """Close the gdb serial connection handler and release its resources.
-        """
-
-        self.client.close()
-        self.sock.close()
-
-    def readpackets(self) -> Iterator[bytes]:
-        """Iterate through incoming packets in an active connection until
-        it is terminated.
-        """
-
-        pattern = re.compile(br'^\$(?P<data>[^#]*)#(?P<checksum>[0-9a-fA-F]{2})')
-        buffer = bytearray()
-
-        while True:
+            pattern = re.compile(br'^\$(?P<data>[^#]*)#(?P<checksum>[0-9a-fA-F]{2})')
+            buffer = bytearray()
+            #print(client)
             try:
-                incoming = self.client.recv(self.BUFSIZE)
+                incoming = client.recv(BUFSIZE)
             except ConnectionError:
-                break
+                self.ql.log.info(f'Connection Error')
 
             # remote connection closed
             if not incoming:
-                break
+                self.killed = True
+                self.ql.log.info(f'Client closed the connection')
+                return
 
             buffer += incoming
 
@@ -849,140 +1017,73 @@ class GdbSerialConn:
 
             # if there is no match, the rest of the packet might be missing
             if not packet:
-                continue
+                return
 
             data = packet['data']
             read_csum = int(packet['checksum'], 16)
-            calc_csum = GdbSerialConn.checksum(data)
+            calc_csum = __checksum(data)
 
             if read_csum != calc_csum:
                 raise IOError(f'checksum error: expected {calc_csum:02x} but got {read_csum:02x}')
 
             # follow gdbserver debug output format
-            self.log.debug(f'getpkt ("{GdbSerialConn.__printable_prefix(data).decode(ENCODING)}");')
+            self.ql.log.debug(f'getpkt ("{__printable_prefix(data).decode(ENCODING)}");')
 
-            data = GdbSerialConn.rle_decode(data)
-            data = GdbSerialConn.unescape(data)
+            data = __rle_decode(data)
+            data = __escape(data)
 
             del buffer[:packet.endpos]
-            yield data
+            packet_queue.put(data)
+        
 
-    def send(self, data: Reply, raw: bool = False) -> None:
-        """Send out a packet.
+        packet_queue = queue.Queue()
 
-        Args:
-            data : data to send out
-            raw : whether to encapsulate the data with standard header and
-            checksum or leave it raw
-        """
+        #define the socket and its parameters 
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((self.ip, self.port))
+        sock.listen()
 
-        if type(data) is str:
-            data = data.encode(ENCODING)
+        client, _ = sock.accept() 
 
-        assert type(data) is bytes
+        client.setblocking(False)
 
-        if raw:
-            packet = data
-        else:
-            data = GdbSerialConn.escape(data)
-            data = GdbSerialConn.rle_encode(data)
+        sel = selectors.DefaultSelector()
 
-            packet = b'$' + data + b'#' + f'{GdbSerialConn.checksum(data):02x}'.encode()
+        sel.register(client, selectors.EVENT_READ, readpackets)
+        if self.gdb.mmio_tracker: 
+            sel.register(sys.stdin, selectors.EVENT_READ, parse_mmio_tracker_command)
 
-        # follow gdbserver debug output format
-        self.log.debug(f'putpkt ("{GdbSerialConn.__printable_prefix(data).decode(ENCODING)}");')
-
-        self.client.sendall(packet)
-
-    @staticmethod
-    def __printable_prefix(data: bytes) -> bytes:
-        """Follow the gnu gdbserver debug message format which emits only the
-        printable prefix of a packet (either incoming or outgoing). Note that
-        despite of its name, it includes non-printable characters as well.
-
-        Args:
-            data : packet data to scan
-
-        Returns: a prefix of the specified data buffer
-        """
-
-        def __isascii(ch: int) -> bool:
-            return 0 < ch < 0x80
-
-        if data.isascii():
-            return data
-
-        return data[:next((i for i, ch in enumerate(data) if not __isascii(ch)), len(data))]
-
-    @staticmethod
-    def escape(data: bytes) -> bytes:
-        """Escape data according to gdb protocol escaping rules.
-        """
-
-        def __repl(m: 're.Match[bytes]') -> bytes:
-            ch, *_ = m[0]
-
-            return bytes([ord('}'), ch ^ 0x20])
-
-        return re.sub(br'[*#$}]', __repl, data, flags=re.DOTALL)
-
-    @staticmethod
-    def unescape(data: bytes) -> bytes:
-        """Unescape data according to gdb protocol escaping rules.
-        """
-
-        def __repl(m: 're.Match[bytes]') -> bytes:
-            _, ch = m[0]
-
-            return bytes([ch ^ 0x20])
-
-        return re.sub(br'}.', __repl, data, flags=re.DOTALL)
-
-    @staticmethod
-    def rle_encode(data: bytes) -> bytes:
-        """Compact data using run-length encoding.
-        """
-
-        def __simple_rep(b: bytes, times: int) -> bytes:
-            return b * times
-
-        def __runlen_rep(b: bytes, times: int) -> bytes:
-            return b + b'*' + bytes([times - 1 + 29])
-
-        def __encode_rep(b: bytes, times: int) -> bytes:
-            assert times > 0, 'time should be a positive value'
-
-            if 0 < times < 4:
-                return __simple_rep(b, times)
-
-            elif times == 6+1 or times == 7+1:
-                return __runlen_rep(b, 6) + __encode_rep(b, times - 6)
-
+        while True:
+            events = sel.select()
+            for key, _ in events:
+                callback = key.data
+                callback(key.fileobj)
+                #if nothing in the queue we have executed the provide or name instruction
+                try :
+                    packet = packet_queue.get(False)
+                    if self.ack_mode:
+                            __send(REPLY_ACK,client, raw=True)
+                    cmd, subcmd = packet[0], packet[1:]
+                    handler = handlers.get(f'{cmd:c}')
+                    if handler:
+                        reply = handler(subcmd.decode(ENCODING))
+                        __send(reply,client)
+                        if self.killed:
+                            break
+                    else:
+                        self.ql.log.info(f'{PROMPT} command not supported')
+                        __send(REPLY_EMPTY,client)
+                except queue.Empty: 
+                    if self.killed == True :
+                        break
+                    pass
             else:
-                return __runlen_rep(b, times)
+                continue
+            break               
 
-        def __repl(m: 're.Match[bytes]') -> bytes:
-            repetition = m[0]
-
-            ch = repetition[0:1]
-            times = len(repetition)
-
-            return __encode_rep(ch, times)
-
-        return re.sub(br'(.)\1{3,96}', __repl, data, flags=re.DOTALL)
-
-    @staticmethod
-    def rle_decode(data: bytes) -> bytes:
-        """Expand run-length encoded data.
-        """
-
-        def __repl(m: 're.Match[bytes]') -> bytes:
-            ch, _, times = m[0]
-
-            return bytes([ch] * (1 + times - 29))
-
-        return re.sub(br'.\*.', __repl, data, flags=re.DOTALL)
-
-    @staticmethod
-    def checksum(data: bytes) -> int:
-        return sum(data) & 0xff
+        client.close()
+        sock.close()   
+        self.gdb.mmio_tracker.dump() if self.gdb.mmio_tracker else None
+        self.gdb.subroutine_tracker.dump_pile()
+        self.gdb.subroutine_tracker.dump_naming()
