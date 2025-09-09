@@ -148,11 +148,11 @@ class MMIOTracker(Render):
 
         # output_str = json.dumps(final_dump)
         
-        with open("MMIO_Tracker_config.json", "r") as fd : 
+        with open("enhanced_debug.json", "r") as fd : 
             tmp = json.loads(fd.read())
             tmp[key] = final_dump
             
-        with open("MMIO_Tracker_config.json", "w") as fd :
+        with open("enhanced_debug.json", "w") as fd :
             fd.write(json.dumps(tmp))
         self.piled_value=save
 

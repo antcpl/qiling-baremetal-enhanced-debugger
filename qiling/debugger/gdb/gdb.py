@@ -413,7 +413,6 @@ class QlGdb(QlDebugger):
             return REPLY_EMPTY
 
         def handle_k(subcmd: str) -> Reply:
-            #print("[+] self.killed handler here !!!!!!!!!!!!!!!")
             self.killed = True
             return REPLY_OK
 
@@ -488,7 +487,6 @@ class QlGdb(QlDebugger):
             )
 
             if feature == 'StartNoAckMode':
-                # #print("non ack mode")
                 self.ack_mode = False
                 self.ql.log.debug('[noack mode enabled]')
 
@@ -802,7 +800,6 @@ class QlGdb(QlDebugger):
             """Perform a single step.
             """
 
-            # #print("!!!!!!!!!!!!!!!! Performing a single step!!!!!!!!!!!!!!!!!")
             
             self.gdb.resume_emu(steps=1)
 
@@ -995,7 +992,6 @@ class QlGdb(QlDebugger):
 
             pattern = re.compile(br'^\$(?P<data>[^#]*)#(?P<checksum>[0-9a-fA-F]{2})')
             buffer = bytearray()
-            #print(client)
             try:
                 incoming = client.recv(BUFSIZE)
             except ConnectionError:

@@ -90,7 +90,7 @@ cd qiling_environment
 python3 -m venv qilingenv
 source qilingenv/bin/activate
 git clone -b enhanced-debug https://github.com/antcpl/qiling-baremetal-enhanced-debugger.git
-cd qiling-baremetal_enhanced-debugger && git submodule update --init --recursive
+cd qiling-baremetal-enhanced-debugger && git submodule update --init --recursive
 pip3 install .
 ``` 
 After this procedure, two different directories will be available : in the ```qiling_environment``` : 

@@ -97,23 +97,23 @@ class SubroutineTrackerARM(SubroutineTracker, ArchARM, Render):
 
 
     def restore(self): 
-        with open("MMIO_Tracker_config.json", "r") as fd:
+        with open("enhanced_debug.json", "r") as fd:
             self.subroutine_tracking_list = json.load(fd)["providing_mmio_map"]
 
     def dump_pile(self): 
         if len(self.subroutine_tracking_list)!=0:
-            with open("MMIO_Tracker_config.json", "r") as fd:
+            with open("enhanced_debug.json", "r") as fd:
                 dic = json.loads(fd.read())
                 dic["subroutine_pile"] = self.subroutine_tracking_list
-            with open("MMIO_Tracker_config.json", "w") as fd: 
+            with open("enhanced_debug.json", "w") as fd: 
                 fd.write(json.dumps(dic))
 
     def dump_naming(self): 
         if self.subroutine_provided_dic:
-            with open("MMIO_Tracker_config.json", "r+") as fd:
+            with open("enhanced_debug.json", "r+") as fd:
                 dic = json.loads(fd.read())
                 dic["subroutine_map"] = self.subroutine_provided_dic
-            with open("MMIO_Tracker_config.json", "w") as fd: 
+            with open("enhanced_debug.json", "w") as fd: 
                 fd.write(json.dumps(dic))
 
     def add_name(self, name, addr=None): 

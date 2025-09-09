@@ -37,15 +37,15 @@ def __convert_list(addr_hook:list = None) -> Optional[dict]:
         return hook_list
 
 def retrieve_json_with_key(key:str = None):
-    filename = "MMIO_Tracker_config.json"
+    filename = "enhanced_debug.json"
     if os.path.exists(filename):
         with open(filename) as config : 
             global_config = json.loads(config.read())
             if key not in global_config:
-                raise QlErrorJsonDecode(f'Key "{key}" missing in the MMIO_Tracker_config.json')
+                raise QlErrorJsonDecode(f'Key "{key}" missing in the enhanced_debug.json')
             return global_config[key]
     else: 
-        raise QlErrorFileNotFound(f'MMIO_Tracker_config.json file not found')
+        raise QlErrorFileNotFound(f'enhanced_debug.json file not found')
 
 
 def setup_mmio_tracker(gdb  = None, server = False, context_render=None)->MMIOTracker: 

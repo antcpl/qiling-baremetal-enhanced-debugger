@@ -48,7 +48,6 @@ class QlGdbUtils:
     def dbg_hook(self, ql: Qiling, address: int, size: int):
 
         #careful of making the subroutine tracking before any conversion to thumb address
-        print(self.subroutine_tracking)
         #subroutine_tracking indicates if the subroutine hook is set or not 
         #stop_feature indicates if the stopping feature is enable or not
         if self.subroutine_tracking: 
