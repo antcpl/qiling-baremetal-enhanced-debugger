@@ -39,7 +39,7 @@ Execute this command line and connect to the 9999 tcp port using a gdb client or
 ```bash 
 python general_script.py
 ```
-You'll just have to control the execution that will be driven by the already provided values. 
+You'll just have to control the execution that will be guided by the already provided values. 
 
 - **general_script.py** : 
 Is the Qiling script used to emulate the binary. You will notice that the enhanced_debugger parameter is present in the gdbserver line. 
@@ -50,11 +50,12 @@ Is the Qiling script used to emulate the binary. You will notice that the enhanc
 
 ## Bruteforce Example : [cortex_M3_bruteforce_example](./cortex_M3_bruteforce_example/)
 
-This example is here to demonstrate the vulnerability hunting part that could be done using Qiling. The firmware itself is well suited to perform a bruteforce on the waited value. Indeed, the comparison is done is a loop as the strcmp maneer. As the processing is done byte per byte this represents only 255 values to try 8 times in a row. The exploit has been entirely design to provide the best performances. 
+This example is here to demonstrate the vulnerability hunting part that could be done using Qiling.  
+The firmware itself is well suited to perform a bruteforce on the waited value. Indeed, the comparison is done in a loop as the strcmp manner. As the processing is done byte per byte this represents only 255 values to try 8 times in a row. The exploit has been entirely design to provide the best performances. 
 
 To test it just execute : 
 
 ```bash 
 python bruteforce.py
 ```
-The bruteforce script starts execution from the execution.bin file. This is a snapshot that has been created using the tool. Using emulation, we reached the poll_in_rx call in the protocol_manager function and start our bruteforce from here. 
+The bruteforce script starts execution from the execution.bin file. This is a snapshot that has been created using the tool and the described method. Using emulation, we reached the poll_in_rx call in the protocol_manager function and start our bruteforce from here. 

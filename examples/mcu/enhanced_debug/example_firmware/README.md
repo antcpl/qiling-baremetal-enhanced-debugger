@@ -1,6 +1,7 @@
 # example_firmware compilation 
 
-First, you will need to install the ```arm-none-eabi``` toolchain that is necessary to compile C code for baremetal ARM cortex M chips. Once done, you can go further with these commands : 
+First, you will need to install the ```arm-none-eabi``` toolchain that is necessary to compile C code for baremetal ARM cortex M chips. The detailed process is available here : [arm-none-eabi toolchain install](https://learn.arm.com/install-guides/gcc/arm-gnu/)  
+Then, you can go further with these commands :  
 
 **To install libopencm3** which is offering all the Hardware Abstraction Layer for the development. 
 ```bash 
