@@ -1,6 +1,6 @@
 #include "common-defines.h"
-#include "core/protocol.h"
-#include "core/uart.h"
+#include "protocol.h"
+#include "uart.h"
 #include <libopencm3/stm32/gpio.h>
 
 uint8_t magic[]={49,51,51,55,49,51,51,55};

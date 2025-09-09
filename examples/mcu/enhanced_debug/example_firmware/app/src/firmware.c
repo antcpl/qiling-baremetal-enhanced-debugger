@@ -22,8 +22,8 @@
 
 
 // #include "core/system.h"
-#include "core/uart.h"
-#include "core/protocol.h"
+#include "uart.h"
+#include "protocol.h"
 #include "common-defines.h"
 
 

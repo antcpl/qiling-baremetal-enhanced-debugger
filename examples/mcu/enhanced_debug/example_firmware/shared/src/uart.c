@@ -1,10 +1,10 @@
-#include "core/uart.h"
-#include "core/ring-buffer.h"
+#include "uart.h"
+#include "ring-buffer.h"
 #include <libopencm3/stm32/rcc.h>
 #include <libopencm3/stm32/usart.h>
 #include <libopencm3/cm3/nvic.h>
 #include <libopencm3/stm32/gpio.h>
-#include "core/ring-buffer.h"
+#include "ring-buffer.h"
 
 
 #define UART_PORT           (GPIOA)

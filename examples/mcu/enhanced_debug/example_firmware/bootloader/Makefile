@@ -101,19 +101,18 @@ LDLIBS		+= -Wl,--start-group -lc -lgcc -lnosys -Wl,--end-group
 ###############################################################################
 ###############################################################################
 
-.SUFFIXES: .elf .bin .hex .srec .list .map .images .o
+.SUFFIXES: .elf .bin .hex .srec .list .map .images
 .SECONDEXPANSION:
 .SECONDARY:
 
-all: object elf bin
+all: elf bin
 
 elf: $(BINARY).elf
 bin: $(BINARY).bin
 hex: $(BINARY).hex
 srec: $(BINARY).srec
 list: $(BINARY).list
-object: $(BINARY).o
-GENERATED_BINARIES=$(BINARY).elf $(BINARY).bin $(BINARY).hex $(BINARY).srec $(BINARY).list $(BINARY).map $(BINARY).o
+GENERATED_BINARIES=$(BINARY).elf $(BINARY).bin $(BINARY).hex $(BINARY).srec $(BINARY).list $(BINARY).map 
 
 images: $(BINARY).images
 flash: $(BINARY).flash
