@@ -97,11 +97,35 @@ After this procedure, two different directories will be available : in the ```qi
 1. ```qilingenv``` : this is the qiling's core and the python scripts used in the python environment. The modifications and the debugging of the core must be done on the python files of this directory. 
 2. ```qiling``` : this directory holds all the Qiling's example scripts and the rootfs that could be used in Qiling. All emulation scripts and developments should be done in this directory. 
 
+## Fuzzing 
+
+As already mentionned, our first motivation is to fuzz baremetal binaries. Here, we describe the setup we used.  
+We used UnicornAFL, the stable version included in Qiling is [UnicornAFL 2.1.0](https://github.com/AFLplusplus/unicornafl/tree/2.1.0) and it corresponds to the latest release.  
+UnicornAFL is based on AFLplusplus and to guarantee compatibility between the two, we used [AFLplusplus 4.0.8c](https://github.com/AFLplusplus/AFLplusplus/tree/4.08c).  
+
+**Installation** :   
+- UnicornAFL is already included in the Qiling environment installed in the aformentionned installation part.   
+- AFLplusplus : 
+```bash 
+git clone https://github.com/AFLplusplus/AFLplusplus.git
+cd AFLplusplus
+git checkout 4.0.8c
+make -C AFLplusplus
+cd AFLplusplus/unicorn_mode ; ./build_unicorn_support.sh
+export PATH=/installation/dir/AFLplusplus:$PATH
+```
+
+The AFLplusplus directory is holding the ```afl-fuzz``` binary that we will use so, it is necessary to modify your PATH.    
+Just a small explanation about the choosen version : UnicornAFL is currently being entirely re-coded notably to migrate to LibAFL. A lot of interesting implementation discussions happen on the [Qiling telegram](https://t.me/qilingframework) feel free to have a look to gather the latest information. 
+
+Check the fuzzing examples below to understand how to use the UnicornAFL API. ([Qiling fuzzing examples](./examples/fuzzing/) are available but most of them are outdated and do not work but they still remain interesting elements to look at). 
+
 ## Examples
 
-For the moment only one example is available, more will come later notably designed for ARM Cortex A7 and ARM7TDMI cores. A detailed README is available directly in the [enhanced_debug](./examples/mcu/enhanced_debug) directory. 
+For the moment only one example is available, more will come later notably designed for ARM Cortex A7 and ARM7TDMI cores. A detailed README is available directly in the [enhanced_debug](./examples/mcu/enhanced_debug) directory.  
+
 
 - [Cortex_M3_reverse_example](./examples/mcu/enhanced_debug/cortex_M3_reverse_example/)
 - [Cortex_M3_bruteforce_example](./examples/mcu/enhanced_debug/cortex_M3_bruteforce_example/)
-
+- [Fuzzing example]()
 
