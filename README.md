@@ -92,6 +92,7 @@ source qilingenv/bin/activate
 git clone -b enhanced-debug https://github.com/antcpl/qiling-baremetal-enhanced-debugger.git
 cd qiling-baremetal-enhanced-debugger && git submodule update --init --recursive
 pip3 install .
+pip3 install unicornafl==2.1.0 #optional, only for fuzzing 
 ``` 
 After this procedure, two different directories will be available : in the ```qiling_environment``` : 
 1. ```qilingenv``` : this is the qiling's core and the python scripts used in the python environment. The modifications and the debugging of the core must be done on the python files of this directory. 
@@ -101,7 +102,7 @@ After this procedure, two different directories will be available : in the ```qi
 
 As already mentionned, our first motivation is to fuzz baremetal binaries. Here, we describe the setup we used.  
 We used UnicornAFL, the stable version included in Qiling is [UnicornAFL 2.1.0](https://github.com/AFLplusplus/unicornafl/tree/2.1.0) and it corresponds to the latest release.  
-UnicornAFL is based on AFLplusplus and to guarantee compatibility between the two, we used [AFLplusplus 4.0.8c](https://github.com/AFLplusplus/AFLplusplus/tree/4.08c).  
+UnicornAFL is based on AFLplusplus and to guarantee compatibility between the two, we used [AFLplusplus v4.08c](https://github.com/AFLplusplus/AFLplusplus/tree/4.08c).  
 
 **Installation** :   
 - UnicornAFL is already included in the Qiling environment installed in the aformentionned installation part.   
@@ -109,7 +110,8 @@ UnicornAFL is based on AFLplusplus and to guarantee compatibility between the tw
 ```bash 
 git clone https://github.com/AFLplusplus/AFLplusplus.git
 cd AFLplusplus
-git checkout 4.0.8c
+git checkout v4.08c
+cd ..
 make -C AFLplusplus
 cd AFLplusplus/unicorn_mode ; ./build_unicorn_support.sh
 export PATH=/installation/dir/AFLplusplus:$PATH
