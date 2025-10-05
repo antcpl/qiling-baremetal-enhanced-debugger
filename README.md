@@ -129,5 +129,5 @@ For the moment only one example is available, more will come later notably desig
 
 - [Cortex_M3_reverse_example](./examples/mcu/enhanced_debug/cortex_M3_reverse_example/)
 - [Cortex_M3_bruteforce_example](./examples/mcu/enhanced_debug/cortex_M3_bruteforce_example/)
-- [Fuzzing example]()
+- [Fuzzing example](./examples/mcu/enhanced_debug/fuzzing_example/)
 
